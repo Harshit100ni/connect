@@ -131,6 +131,7 @@ async function startAsCaller() {
       ? 'Share your offer code below'
       : 'Share your offer code below (poor network — connection may fail)';
     $('copyOfferBtn').disabled = false;
+    $('connectBtn').disabled = false;
     updateSteps('caller', 2);
   } catch {
     if (localStream !== null) {
@@ -166,6 +167,7 @@ async function startAsReceiver() {
 
   showSignalingView('receiverView');
   $('localInitial').textContent = getUserName().charAt(0).toUpperCase();
+  $('generateAnswerBtn').disabled = false;
 }
 
 async function processOffer() {
