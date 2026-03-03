@@ -1,6 +1,6 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js';
 import {
-  getDatabase, ref, set, get, onValue, push, onChildAdded, remove,
+  getDatabase, ref, set, get, onValue, push, onChildAdded, remove, onDisconnect,
 } from 'https://www.gstatic.com/firebasejs/10.14.1/firebase-database.js';
 
 // ↓ Paste your Firebase project config here.
@@ -36,6 +36,9 @@ export async function createRoom(pc) {
   const offer = await pc.createOffer();
   await pc.setLocalDescription(offer);
   await set(r(`rooms/${roomId}/offer`), { type: offer.type, sdp: offer.sdp });
+
+  // Auto-delete room if the caller's tab closes or crashes.
+  onDisconnect(r(`rooms/${roomId}`)).remove();
 
   // Listen for the receiver's answer.
   onValue(r(`rooms/${roomId}/answer`), async (snap) => {
