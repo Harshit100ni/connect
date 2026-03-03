@@ -414,6 +414,10 @@ body {
 /* Fix #10: extracted from inline styles */
 .input-group--sm { margin-bottom: 20px; }
 
+.btn-full { width: 100%; justify-content: center; margin-bottom: 28px; }
+
+.joining-status { display: flex; justify-content: center; padding: 40px 0; }
+
 .role-buttons {
   display: flex;
   gap: 10px;

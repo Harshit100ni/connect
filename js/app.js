@@ -2,12 +2,10 @@ import {
   ICE_SERVERS,
   getLocalStream,
   createPeerConnection,
-  waitForIceGathering,
   startQualityMonitor,
-  encodeDescription,
-  decodeDescription,
 } from './webrtc.js';
 import { setupAudioMonitor } from './audio.js';
+import { createRoom, joinRoom, cleanupRoom } from './signaling.js';
 
 // — State —
 let pc = null;
@@ -19,28 +17,16 @@ let remoteAudio = null;
 let stopLocalMonitor = null;
 let stopRemoteMonitor = null;
 let stopQuality = null;
-// True from the moment processOffer starts until the receiver copies their answer.
-// Ensures showCallView is never triggered before the answer code has been shared.
-let receiverProcessing = false;
-let pendingCallView = false;
+let roomId = null;
 
 // — DOM helpers —
 const $ = (id) => document.getElementById(id);
 
-function showSignalingView(viewId) {
-  ['setupView', 'callerView', 'receiverView'].forEach(id => {
+function showView(viewId) {
+  ['setupView', 'waitingView', 'joiningView'].forEach(id => {
     $(id).classList.toggle('hidden', id !== viewId);
   });
-}
-
-function updateSteps(role, step) {
-  const prefix = role === 'caller' ? 'c' : 'r';
-  for (let i = 1; i <= 3; i++) {
-    const el = $(`${prefix}Step${i}`);
-    el.classList.remove('active', 'done');
-    if (i < step) el.classList.add('done');
-    else if (i === step) el.classList.add('active');
-  }
+  $('callView').classList.toggle('active', viewId === 'callView');
 }
 
 function getUserName() {
@@ -59,45 +45,22 @@ function updateQuality(quality) {
   el.innerHTML = `<span class="dot"></span>${label}`;
 }
 
-function setSignalingButtons(disabled) {
-  ['callerBtn', 'receiverBtn', 'connectBtn', 'generateAnswerBtn'].forEach(id => {
-    $(id).disabled = disabled;
-  });
-}
-
 // — WebRTC setup —
 function initPeerConnection() {
   pc = createPeerConnection(ICE_SERVERS, {
-    onConnected() {
-      if (callStartTime !== null) {
-        // Reconnect after a drop — just restore quality display.
-        updateQuality('good');
-      } else if (receiverProcessing) {
-        // ICE connected before the receiver copied their answer code.
-        // Defer the call view until copyAnswerBtn is clicked.
-        pendingCallView = true;
-        if (!$('answerBox').classList.contains('hidden')) {
-          $('receiverStatus').textContent = 'Connected! Share your answer code to complete.';
-        }
-      } else {
-        showCallView();
-      }
-    },
+    onConnected: showCallView,
     onDisconnected: endCall,
     onReconnecting: () => updateQuality('reconnecting'),
     onRemoteTrack(stream) {
       if (!remoteAudio) {
         remoteAudio = new Audio();
         remoteAudio.autoplay = true;
-        // Attach to DOM so mobile browsers don't suspend/GC the element.
         remoteAudio.style.display = 'none';
         document.body.appendChild(remoteAudio);
       }
       if (remoteAudio.srcObject !== stream) {
         remoteAudio.srcObject = stream;
-        remoteAudio.play().catch(() => {
-          $('autoplayBtn').classList.remove('hidden');
-        });
+        remoteAudio.play().catch(() => $('autoplayBtn').classList.remove('hidden'));
         stopRemoteMonitor?.();
         stopRemoteMonitor = setupAudioMonitor(stream, 'remoteAvatar');
       }
@@ -116,130 +79,67 @@ async function acquireMic() {
     localStream = await getLocalStream();
     return true;
   } catch {
-    alert('Microphone access is required for voice calls. Please allow microphone access and try again.');
+    alert('Microphone access is required. Please allow it and try again.');
     return false;
   }
 }
 
 // — Caller flow —
-async function startAsCaller() {
-  setSignalingButtons(true);
-  if (!(await acquireMic())) { setSignalingButtons(false); return; }
+async function startCall() {
+  $('startCallBtn').disabled = true;
+  if (!(await acquireMic())) { $('startCallBtn').disabled = false; return; }
 
-  showSignalingView('callerView');
   $('localInitial').textContent = getUserName().charAt(0).toUpperCase();
-  $('copyOfferBtn').disabled = true;             // Fix #9: not ready until ICE gathered
-  $('callerStatus').textContent = 'Gathering network paths…'; // Fix #9: progress feedback
+  initPeerConnection();
+  showView('waitingView');
 
   try {
-    initPeerConnection();
-    const thisPc = pc;
-    const offer = await thisPc.createOffer();
-    await thisPc.setLocalDescription(offer);
-    const gathered = await waitForIceGathering(thisPc);
-
-    if (pc !== thisPc) return; // cancelled and a new call may have started
-    $('offerText').value = encodeDescription(thisPc.localDescription);
-    $('callerStatus').textContent = gathered
-      ? 'Share your offer code below'
-      : 'Share your offer code below (poor network — connection may fail)';
-    $('copyOfferBtn').disabled = false;
-    $('connectBtn').disabled = false;
-    updateSteps('caller', 2);
+    roomId = await createRoom(pc);
+    const url = `${location.origin}${location.pathname}?room=${roomId}`;
+    $('shareUrl').value = url;
+    history.replaceState(null, '', `?room=${roomId}`);
   } catch {
-    if (localStream !== null) {
-      endCall();
-      alert('Failed to create offer. Please check your microphone and try again.');
-    }
-  }
-}
-
-async function acceptAnswer() {
-  if (!pc) return;
-  $('connectBtn').disabled = true;
-  const answerStr = $('answerInput').value.trim();
-  if (!answerStr) {
-    $('connectBtn').disabled = false;
-    return alert('Please paste the answer code.');
+    endCall();
+    alert('Failed to create call. Check your Firebase configuration and try again.');
   }
 
-  try {
-    await pc.setRemoteDescription(new RTCSessionDescription(decodeDescription(answerStr)));
-    $('callerStatus').textContent = 'Connecting…';
-    updateSteps('caller', 3);
-  } catch {
-    $('connectBtn').disabled = false;
-    alert('Invalid answer code. Please check and try again.');
-  }
+  $('startCallBtn').disabled = false;
 }
 
 // — Receiver flow —
-async function startAsReceiver() {
-  setSignalingButtons(true);
-  if (!(await acquireMic())) { setSignalingButtons(false); return; }
+async function joinCall(rid) {
+  showView('joiningView');
+  if (!(await acquireMic())) {
+    history.replaceState(null, '', location.pathname);
+    showView('setupView');
+    return;
+  }
 
-  showSignalingView('receiverView');
   $('localInitial').textContent = getUserName().charAt(0).toUpperCase();
-  $('generateAnswerBtn').disabled = false;
-}
-
-async function processOffer() {
-  $('generateAnswerBtn').disabled = true;
-  const offerStr = $('offerInput').value.trim();
-  if (!offerStr) {
-    $('generateAnswerBtn').disabled = false;
-    return alert('Please paste the offer code.');
-  }
-
-  // Fix #5/#6: decode and validate first — clear error before touching WebRTC
-  let decodedOffer;
-  try {
-    decodedOffer = decodeDescription(offerStr);
-  } catch {
-    $('generateAnswerBtn').disabled = false;
-    return alert('Invalid offer code. Please check and try again.');
-  }
-
-  $('receiverStatus').textContent = 'Generating answer…';
-  receiverProcessing = true;
+  initPeerConnection();
 
   try {
-    initPeerConnection();
-    const thisPc = pc;
-    await thisPc.setRemoteDescription(new RTCSessionDescription(decodedOffer));
-
-    const answer = await thisPc.createAnswer();
-    await thisPc.setLocalDescription(answer);
-    const gathered = await waitForIceGathering(thisPc);
-
-    if (pc !== thisPc) return; // cancelled and a new call may have started
-    $('answerText').value = encodeDescription(thisPc.localDescription);
-    $('answerBox').classList.remove('hidden');
-    $('receiverStatus').textContent = pendingCallView
-      ? 'Connected! Share your answer code to complete.'
-      : gathered
-        ? 'Share your answer code back'
-        : 'Share your answer code back (poor network — connection may fail)';
-    updateSteps('receiver', 2);
-  } catch {
-    if (localStream !== null) {
-      receiverProcessing = false;
-      pc?.close(); pc = null;
-      stopLocalMonitor?.(); stopLocalMonitor = null;
-      $('receiverStatus').textContent = 'Waiting for offer code…';
-      $('generateAnswerBtn').disabled = false;
-      alert('Connection setup failed. Please try again.');
+    const joined = await joinRoom(pc, rid);
+    if (!joined) {
+      alert('Room not found. The link may have expired or already been used.');
+      endCall();
     }
+    // onConnected fires automatically when ICE connects → showCallView()
+  } catch {
+    alert('Failed to join call. Please try again.');
+    endCall();
   }
 }
 
 // — Call view —
 function showCallView() {
-  if (callStartTime !== null) return;
+  if (callStartTime !== null) {
+    // Reconnected after a drop — restore quality display.
+    updateQuality('good');
+    return;
+  }
 
-  $('callerView').classList.add('hidden');
-  $('receiverView').classList.add('hidden');
-  $('callView').classList.add('active');
+  showView('callView');
 
   callStartTime = Date.now();
   timerInterval = setInterval(() => {
@@ -262,6 +162,9 @@ function toggleMute() {
 }
 
 function endCall() {
+  cleanupRoom(roomId);
+  roomId = null;
+
   pc?.close(); pc = null;
   localStream?.getTracks().forEach(t => t.stop()); localStream = null;
   clearInterval(timerInterval); timerInterval = null;
@@ -272,63 +175,48 @@ function endCall() {
   if (remoteAudio) { remoteAudio.srcObject = null; remoteAudio.remove(); remoteAudio = null; }
   stopQuality?.(); stopQuality = null;
 
-  $('callView').classList.remove('active');
-  showSignalingView('setupView');
-
-  ['offerText', 'answerInput', 'offerInput', 'answerText'].forEach(id => $(id).value = '');
-  $('answerBox').classList.add('hidden');
   $('callTimer').textContent = '00:00';
   $('qualityIndicator').className = 'quality-indicator';
   $('qualityIndicator').innerHTML = '';
   $('autoplayBtn').classList.add('hidden');
-  $('copyOfferBtn').disabled = false;
-  $('callerStatus').textContent = 'Creating offer…';
-  $('receiverStatus').textContent = 'Waiting for offer code…';
   isMuted = false;
   $('muteBtn').classList.remove('muted');
   $('micIcon').classList.remove('hidden');
   $('micOffIcon').classList.add('hidden');
 
-  receiverProcessing = false;
-  pendingCallView = false;
-  updateSteps('caller', 1);
-  updateSteps('receiver', 1);
-  setSignalingButtons(false);
+  history.replaceState(null, '', location.pathname);
+  showView('setupView');
 }
 
-async function copyToClipboard(textareaId, btn) {
-  const text = $(textareaId).value;
+async function copyLink(btn) {
+  const url = $('shareUrl').value;
   const orig = btn.textContent;
   try {
-    await navigator.clipboard.writeText(text);
+    await navigator.clipboard.writeText(url);
     btn.textContent = 'Copied!';
-    setTimeout(() => (btn.textContent = orig), 1500);
   } catch {
-    const ta = $(textareaId);
-    ta.select();
-    ta.setSelectionRange(0, 99999);
+    $('shareUrl').select();
+    $('shareUrl').setSelectionRange(0, 99999);
     btn.textContent = 'Press Ctrl+C';
-    setTimeout(() => (btn.textContent = orig), 2500);
   }
+  setTimeout(() => (btn.textContent = orig), 1500);
+}
+
+// — Init: auto-join if URL contains ?room= —
+const urlRoom = new URLSearchParams(location.search).get('room');
+if (urlRoom) {
+  joinCall(urlRoom);
+} else {
+  showView('setupView');
 }
 
 // — Event listeners —
-$('callerBtn').addEventListener('click', startAsCaller);
-$('receiverBtn').addEventListener('click', startAsReceiver);
-$('connectBtn').addEventListener('click', acceptAnswer);
-$('generateAnswerBtn').addEventListener('click', processOffer);
+$('startCallBtn').addEventListener('click', startCall);
+$('cancelWaitBtn').addEventListener('click', endCall);
 $('muteBtn').addEventListener('click', toggleMute);
 $('endBtn').addEventListener('click', endCall);
-$('copyOfferBtn').addEventListener('click', (e) => copyToClipboard('offerText', e.currentTarget));
-$('copyAnswerBtn').addEventListener('click', (e) => {
-  copyToClipboard('answerText', e.currentTarget);
-  receiverProcessing = false;
-  if (pendingCallView) { pendingCallView = false; showCallView(); }
-});
+$('copyLinkBtn').addEventListener('click', (e) => copyLink(e.currentTarget));
 $('autoplayBtn').addEventListener('click', () => {
   remoteAudio?.play();
   $('autoplayBtn').classList.add('hidden');
 });
-// Fix #7: cancel/back buttons — endCall handles full cleanup and returns to setup
-$('callerCancelBtn').addEventListener('click', endCall);
-$('receiverCancelBtn').addEventListener('click', endCall);

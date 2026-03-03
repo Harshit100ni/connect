@@ -16,100 +16,43 @@
   <div class="tagline">Peer-to-peer voice, nothing in between</div>
 
   <div class="card">
+
     <!-- SETUP VIEW -->
     <div id="setupView">
       <div class="section-title">Your Name</div>
       <div class="input-group input-group--sm">
-        <input type="text" id="userName" placeholder="Enter your name" value="" maxlength="20">
+        <input type="text" id="userName" placeholder="Enter your name" maxlength="20">
       </div>
-
-      <div class="section-title">Role</div>
-      <div class="role-buttons">
-        <button class="btn btn-accent" id="callerBtn">
-          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 3-2.5 2.5c1 2 2.5 3.5 4.5 4.5L15.5 11l3 2v4a1 1 0 01-1 1A16 16 0 013 3.5a1 1 0 011-1z" transform="scale(0.8)"/></svg>
-          Start Call
-        </button>
-        <button class="btn btn-green" id="receiverBtn">
-          <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6A19.79 19.79 0 012.12 4.18 2 2 0 014.11 2h3a2 2 0 012 1.72c.127.96.361 1.903.7 2.81a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0122 16.92z" transform="scale(0.65)"/></svg>
-          Join Call
-        </button>
-      </div>
-
-      <div class="info-tip">
-        <strong>How it works:</strong> This app uses WebRTC for direct peer-to-peer voice. One person clicks "Start Call" and shares their offer code. The other clicks "Join Call" and pastes it. Then they exchange answer codes to connect. No server needed.
-      </div>
+      <button class="btn btn-accent btn-full" id="startCallBtn">
+        <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 4h4l2 3-2.5 2.5c1 2 2.5 3.5 4.5 4.5L15.5 11l3 2v4a1 1 0 01-1 1A16 16 0 013 3.5a1 1 0 011-1z" transform="scale(0.8)"/></svg>
+        Start Call
+      </button>
     </div>
 
-    <!-- CALLER SIGNALING VIEW -->
-    <div id="callerView" class="hidden">
-      <button class="btn-cancel" id="callerCancelBtn">← Back</button>
-      <div class="step-indicator">
-        <div class="step active" id="cStep1"><span class="step-num">1</span> Create Offer</div>
-        <div class="step-line"></div>
-        <div class="step" id="cStep2"><span class="step-num">2</span> Get Answer</div>
-        <div class="step-line"></div>
-        <div class="step" id="cStep3"><span class="step-num">3</span> Connected</div>
-      </div>
-
+    <!-- WAITING VIEW (caller waiting for receiver to open link) -->
+    <div id="waitingView" class="hidden">
+      <button class="btn-cancel" id="cancelWaitBtn">← Cancel</button>
       <div class="status-area">
         <div class="status-badge">
           <span class="status-dot waiting"></span>
-          <span id="callerStatus">Creating offer…</span>
+          <span>Waiting for other person to join…</span>
         </div>
       </div>
-
-      <div class="signal-area signal-area--flush">
-        <div class="signal-box" id="offerBox">
-          <label>Your Offer Code (share this)</label>
-          <textarea id="offerText" readonly placeholder="Generating..."></textarea>
-          <div class="signal-actions">
-            <button class="btn btn-accent" id="copyOfferBtn">Copy</button>
-          </div>
-        </div>
-
-        <div class="signal-box" id="answerInputBox">
-          <label>Paste Answer Code from other person</label>
-          <textarea id="answerInput" placeholder="Paste the answer code here..."></textarea>
-          <div class="signal-actions">
-            <button class="btn btn-green" id="connectBtn">Connect</button>
-          </div>
+      <div class="section-title">Share this link</div>
+      <div class="signal-box">
+        <textarea id="shareUrl" readonly rows="2"></textarea>
+        <div class="signal-actions">
+          <button class="btn btn-accent" id="copyLinkBtn">Copy Link</button>
         </div>
       </div>
     </div>
 
-    <!-- RECEIVER SIGNALING VIEW -->
-    <div id="receiverView" class="hidden">
-      <button class="btn-cancel" id="receiverCancelBtn">← Back</button>
-      <div class="step-indicator">
-        <div class="step active" id="rStep1"><span class="step-num">1</span> Paste Offer</div>
-        <div class="step-line"></div>
-        <div class="step" id="rStep2"><span class="step-num">2</span> Send Answer</div>
-        <div class="step-line"></div>
-        <div class="step" id="rStep3"><span class="step-num">3</span> Connected</div>
-      </div>
-
-      <div class="status-area">
+    <!-- JOINING VIEW (receiver auto-joining from URL) -->
+    <div id="joiningView" class="hidden">
+      <div class="joining-status">
         <div class="status-badge">
           <span class="status-dot waiting"></span>
-          <span id="receiverStatus">Waiting for offer code…</span>
-        </div>
-      </div>
-
-      <div class="signal-area signal-area--flush">
-        <div class="signal-box" id="offerPasteBox">
-          <label>Paste Offer Code from caller</label>
-          <textarea id="offerInput" placeholder="Paste the offer code here..."></textarea>
-          <div class="signal-actions">
-            <button class="btn btn-accent" id="generateAnswerBtn">Generate Answer</button>
-          </div>
-        </div>
-
-        <div class="signal-box hidden" id="answerBox">
-          <label>Your Answer Code (share this back)</label>
-          <textarea id="answerText" readonly placeholder=""></textarea>
-          <div class="signal-actions">
-            <button class="btn btn-green" id="copyAnswerBtn">Copy</button>
-          </div>
+          <span>Joining call…</span>
         </div>
       </div>
     </div>
@@ -157,6 +100,7 @@
         </button>
       </div>
     </div>
+
   </div>
 </div>
 
