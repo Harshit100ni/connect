@@ -19,8 +19,9 @@ let remoteAudio = null;
 let stopLocalMonitor = null;
 let stopRemoteMonitor = null;
 let stopQuality = null;
-// True when ICE connected before the receiver copied their answer code.
-// showCallView is deferred until copyAnswerBtn is clicked.
+// True from the moment processOffer starts until the receiver copies their answer.
+// Ensures showCallView is never triggered before the answer code has been shared.
+let receiverProcessing = false;
 let pendingCallView = false;
 
 // — DOM helpers —
@@ -71,11 +72,13 @@ function initPeerConnection() {
       if (callStartTime !== null) {
         // Reconnect after a drop — just restore quality display.
         updateQuality('good');
-      } else if (!$('answerBox').classList.contains('hidden')) {
-        // ICE connected before the receiver shared their answer code.
-        // Defer the transition until copyAnswerBtn is clicked.
+      } else if (receiverProcessing) {
+        // ICE connected before the receiver copied their answer code.
+        // Defer the call view until copyAnswerBtn is clicked.
         pendingCallView = true;
-        $('receiverStatus').textContent = 'Connected! Share your answer code to complete.';
+        if (!$('answerBox').classList.contains('hidden')) {
+          $('receiverStatus').textContent = 'Connected! Share your answer code to complete.';
+        }
       } else {
         showCallView();
       }
@@ -197,7 +200,8 @@ async function processOffer() {
     return alert('Invalid offer code. Please check and try again.');
   }
 
-  $('receiverStatus').textContent = 'Generating answer…'; // Fix #9: progress feedback
+  $('receiverStatus').textContent = 'Generating answer…';
+  receiverProcessing = true;
 
   try {
     initPeerConnection();
@@ -211,12 +215,15 @@ async function processOffer() {
     if (pc !== thisPc) return; // cancelled and a new call may have started
     $('answerText').value = encodeDescription(thisPc.localDescription);
     $('answerBox').classList.remove('hidden');
-    $('receiverStatus').textContent = gathered
-      ? 'Share your answer code back'
-      : 'Share your answer code back (poor network — connection may fail)';
+    $('receiverStatus').textContent = pendingCallView
+      ? 'Connected! Share your answer code to complete.'
+      : gathered
+        ? 'Share your answer code back'
+        : 'Share your answer code back (poor network — connection may fail)';
     updateSteps('receiver', 2);
   } catch {
     if (localStream !== null) {
+      receiverProcessing = false;
       pc?.close(); pc = null;
       stopLocalMonitor?.(); stopLocalMonitor = null;
       $('receiverStatus').textContent = 'Waiting for offer code…';
@@ -282,6 +289,7 @@ function endCall() {
   $('micIcon').classList.remove('hidden');
   $('micOffIcon').classList.add('hidden');
 
+  receiverProcessing = false;
   pendingCallView = false;
   updateSteps('caller', 1);
   updateSteps('receiver', 1);
@@ -314,6 +322,7 @@ $('endBtn').addEventListener('click', endCall);
 $('copyOfferBtn').addEventListener('click', (e) => copyToClipboard('offerText', e.currentTarget));
 $('copyAnswerBtn').addEventListener('click', (e) => {
   copyToClipboard('answerText', e.currentTarget);
+  receiverProcessing = false;
   if (pendingCallView) { pendingCallView = false; showCallView(); }
 });
 $('autoplayBtn').addEventListener('click', () => {
