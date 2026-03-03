@@ -19,6 +19,9 @@ let remoteAudio = null;
 let stopLocalMonitor = null;
 let stopRemoteMonitor = null;
 let stopQuality = null;
+// True when ICE connected before the receiver copied their answer code.
+// showCallView is deferred until copyAnswerBtn is clicked.
+let pendingCallView = false;
 
 // — DOM helpers —
 const $ = (id) => document.getElementById(id);
@@ -65,10 +68,17 @@ function setSignalingButtons(disabled) {
 function initPeerConnection() {
   pc = createPeerConnection(ICE_SERVERS, {
     onConnected() {
-      // First connection: show the call view.
-      // Subsequent reconnects (callStartTime already set): just restore quality.
-      if (callStartTime !== null) updateQuality('good');
-      else showCallView();
+      if (callStartTime !== null) {
+        // Reconnect after a drop — just restore quality display.
+        updateQuality('good');
+      } else if (!$('answerBox').classList.contains('hidden')) {
+        // ICE connected before the receiver shared their answer code.
+        // Defer the transition until copyAnswerBtn is clicked.
+        pendingCallView = true;
+        $('receiverStatus').textContent = 'Connected! Share your answer code to complete.';
+      } else {
+        showCallView();
+      }
     },
     onDisconnected: endCall,
     onReconnecting: () => updateQuality('reconnecting'),
@@ -272,6 +282,7 @@ function endCall() {
   $('micIcon').classList.remove('hidden');
   $('micOffIcon').classList.add('hidden');
 
+  pendingCallView = false;
   updateSteps('caller', 1);
   updateSteps('receiver', 1);
   setSignalingButtons(false);
@@ -301,7 +312,10 @@ $('generateAnswerBtn').addEventListener('click', processOffer);
 $('muteBtn').addEventListener('click', toggleMute);
 $('endBtn').addEventListener('click', endCall);
 $('copyOfferBtn').addEventListener('click', (e) => copyToClipboard('offerText', e.currentTarget));
-$('copyAnswerBtn').addEventListener('click', (e) => copyToClipboard('answerText', e.currentTarget));
+$('copyAnswerBtn').addEventListener('click', (e) => {
+  copyToClipboard('answerText', e.currentTarget);
+  if (pendingCallView) { pendingCallView = false; showCallView(); }
+});
 $('autoplayBtn').addEventListener('click', () => {
   remoteAudio?.play();
   $('autoplayBtn').classList.add('hidden');
